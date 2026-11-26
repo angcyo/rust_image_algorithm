@@ -5,6 +5,7 @@ use crate::advanced::*;
 use crate::binary::*;
 use crate::blend::*;
 use crate::color::*;
+use crate::contour::*;
 use crate::distort::*;
 use crate::edge::*;
 use crate::filter::*;
@@ -183,6 +184,29 @@ pub fn cases(src: &Image) -> Vec<Case> {
         out
     });
 
+    // 高精度轮廓 (contour 模块): 参数化提取, 底图为原图
+    let cp = |f: &dyn Fn(&mut ContourParams)| {
+        let mut p = ContourParams { threshold: otsu, invert: false, min_area: 30.0, ..Default::default() };
+        f(&mut p);
+        p
+    };
+    let paint = |ps: &[(ContourParams, [u8; 4])]| {
+        let mut out = src.clone();
+        for (p, col) in ps {
+            draw_paths(&mut out, &extract_contours(&gray, p), *col, 1);
+        }
+        out
+    };
+    let (red, green, blue) = ([255, 0, 0, 255], [0, 200, 0, 255], [0, 80, 255, 255]);
+    case!(v, cat, "contour_precise_holes", "亚像素轮廓, 保留孔洞 (红=外轮廓+孔洞)", paint(&[(cp(&|p| { p.smooth_sigma = 1.0; }), red)]));
+    case!(v, cat, "contour_precise_no_holes", "亚像素轮廓, 不保留孔洞", paint(&[(cp(&|p| { p.smooth_sigma = 1.0; p.keep_holes = false; }), red)]));
+    case!(v, cat, "contour_precise_simplified", "亚像素轮廓 + DP 简化 ε=1.5 + Chaikin 平滑 2 次", paint(&[(cp(&|p| { p.smooth_sigma = 1.0; p.simplify_epsilon = 1.5; p.smooth_iterations = 2; }), green)]));
+    case!(v, cat, "contour_offset_miter", "轮廓外扩 +3px, 尖角 (红=原始, 蓝=偏移)", paint(&[(cp(&|_| {}), red), (cp(&|p| { p.offset = 3.0; p.join = JoinType::Miter; p.miter_limit = 3.0; }), blue)]));
+    case!(v, cat, "contour_offset_round", "轮廓外扩 +3px, 圆角", paint(&[(cp(&|_| {}), red), (cp(&|p| { p.offset = 3.0; p.join = JoinType::Round; }), blue)]));
+    case!(v, cat, "contour_offset_bevel", "轮廓外扩 +3px, 斜角", paint(&[(cp(&|_| {}), red), (cp(&|p| { p.offset = 3.0; p.join = JoinType::Bevel; }), blue)]));
+    case!(v, cat, "contour_inset", "轮廓内缩 -2px, 圆角", paint(&[(cp(&|_| {}), red), (cp(&|p| { p.offset = -2.0; p.join = JoinType::Round; }), blue)]));
+    case!(v, cat, "contour_translate", "轮廓平移 (6,6) 做投影描边", paint(&[(cp(&|_| {}), red), (cp(&|p| { p.translate = (6.0, 6.0); }), blue)]));
+    case!(v, cat, "contour_threshold_invert", "阈值 + 反相 (取亮部为前景 vs 暗部为前景)", paint(&[(cp(&|p| { p.threshold = 200.0; }), red), (cp(&|p| { p.threshold = 200.0; p.invert = true; }), blue)]));
     let cat = "几何变换";
     case!(v, cat, "tf_resize_nearest", "缩放: 最近邻 (缩小到 1/4 再放大)", resize(&resize(src, src.width / 4, src.height / 4, Interp::Nearest), src.width, src.height, Interp::Nearest));
     case!(v, cat, "tf_resize_bilinear", "缩放: 双线性 (缩小到 1/4 再放大)", resize(&resize(src, src.width / 4, src.height / 4, Interp::Bilinear), src.width, src.height, Interp::Bilinear));

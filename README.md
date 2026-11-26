@@ -110,3 +110,21 @@ cargo run --release --example gallery <图片> <尺寸>  # 自定义输入
 
 `src/gallery.rs` 是所有示例的唯一注册表 (109 个, 含调用代码); `tests/gallery.rs` 校验每个算法能运行、尺寸有效、结果相对输入有变化。
 每种算法的输出图片与调用代码见 [docs/GALLERY.md](docs/GALLERY.md)。
+## 高精度轮廓提取 (`contour` 模块)
+
+`extract_contours(&gray, &ContourParams)` 基于 Marching Squares + 线性插值, 返回亚像素浮点闭合路径 `ContourPath { points, is_hole, area, parent }`。
+
+| 参数 | 说明 |
+|------|------|
+| `threshold` / `invert` | 阈值 (>= 为前景) / 反相取暗部 |
+| `smooth_sigma` | 预高斯模糊, 抑制噪点与锯齿 |
+| `subpixel` | 亚像素线性插值 (关闭则取格边中点) |
+| `keep_holes` | 是否保留孔洞 (内轮廓); `parent` 给出嵌套层级 |
+| `min_area` / `max_area` / `min_length` | 面积、周长过滤 |
+| `simplify_epsilon` | Douglas–Peucker 简化容差 |
+| `smooth_iterations` | Chaikin 切角平滑次数 |
+| `offset` + `join` (`Miter`/`Round`/`Bevel`) + `miter_limit` + `arc_step_deg` | 沿法线外扩(+)/内缩(-), 拐角类型, 尖角限制, 圆角精度 |
+| `translate` | 整体平移 |
+
+配套: `draw_paths` 绘制、`paths_to_svg` 导出 SVG、`signed_area` / `path_length` / `point_in_polygon`。
+局限: 偏移不做自相交清理, 偏移量远大于局部曲率半径时内侧可能出现小回环。示例见 `tests/output/output.md` 中 `contour_*`。

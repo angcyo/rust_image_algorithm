@@ -88,3 +88,78 @@ fn color_ops() {
     assert_eq!((r.width, r.height), (20, 15));
     assert_eq!(gaussian_blur(&img, 0.0), img);
 }
+
+fn ring_img() -> Gray {
+    // 外框 x 10..=39, y 8..=31, 孔洞 x 20..=29, y 14..=25 (背景)
+    gfn(60, 40, |x, y| {
+        let outer = (10..40).contains(&x) && (8..32).contains(&y);
+        let hole = (20..30).contains(&x) && (14..26).contains(&y);
+        if outer && !hole { 255.0 } else { 0.0 }
+    })
+}
+
+#[test]
+fn contour_params_holes_and_hierarchy() {
+    use rust_image_algorithm::contour::*;
+    let g = ring_img();
+    let all = extract_contours(&g, &ContourParams::default());
+    assert_eq!(all.len(), 2);
+    let outer = all.iter().position(|c| !c.is_hole).unwrap();
+    let hole = all.iter().position(|c| c.is_hole).unwrap();
+    assert!((all[outer].area - 30.0 * 24.0).abs() < 1.0, "{}", all[outer].area);
+    assert!((all[hole].area - 10.0 * 12.0).abs() < 1.0, "{}", all[hole].area);
+    assert_eq!(all[hole].parent, Some(outer));
+    let only = extract_contours(&g, &ContourParams { keep_holes: false, ..Default::default() });
+    assert_eq!(only.len(), 1);
+    // 面积过滤去掉孔洞; 阈值高于前景时无轮廓; 反相后前景变为背景(外框+孔洞整体外轮廓为画面边界)
+    assert_eq!(extract_contours(&g, &ContourParams { min_area: 200.0, ..Default::default() }).len(), 1);
+    assert!(extract_contours(&g, &ContourParams { threshold: 300.0, ..Default::default() }).is_empty());
+}
+
+#[test]
+fn contour_offset_and_join() {
+    use rust_image_algorithm::contour::*;
+    let g = ring_img();
+    let area = |p: &ContourParams| -> (f32, f32) {
+        let c = extract_contours(&g, p);
+        let o = c.iter().find(|c| !c.is_hole).unwrap();
+        let h = c.iter().find(|c| c.is_hole).unwrap();
+        (signed_area(&o.points).abs(), signed_area(&h.points).abs())
+    };
+    let base = area(&ContourParams::default());
+    // 尖角外扩 2px: 外框 (30+4)*(24+4), 孔洞缩小为 (10-4)*(12-4)
+    let m = area(&ContourParams { offset: 2.0, join: JoinType::Miter, ..Default::default() });
+    assert!((m.0 - 34.0 * 28.0).abs() < 8.0, "{m:?}");
+    assert!((m.1 - 6.0 * 8.0).abs() < 3.0, "{m:?}");
+    // 圆角外扩: A + P*d + πd² (多边形近似略小), 小于尖角
+    let r = area(&ContourParams { offset: 2.0, join: JoinType::Round, ..Default::default() });
+    let want = base.0 + 108.0 * 2.0 + std::f32::consts::PI * 4.0;
+    assert!((r.0 - want).abs() < 6.0, "{r:?} {want}");
+    let b = area(&ContourParams { offset: 2.0, join: JoinType::Bevel, ..Default::default() });
+    assert!(b.0 < r.0 && r.0 < m.0, "{b:?} {r:?} {m:?}");
+    // 内缩
+    let s = area(&ContourParams { offset: -2.0, ..Default::default() });
+    assert!((s.0 - 26.0 * 20.0).abs() < 8.0, "{s:?}");
+    // 内缩超过半宽: 孔洞外扩后吞并, 轮廓被丢弃或保持有效
+    for c in extract_contours(&g, &ContourParams { offset: -20.0, ..Default::default() }) {
+        assert!(signed_area(&c.points).abs() > 0.0);
+    }
+}
+
+#[test]
+fn contour_translate_and_subpixel() {
+    use rust_image_algorithm::contour::*;
+    let g = ring_img();
+    let a = extract_contours(&g, &ContourParams::default());
+    let b = extract_contours(&g, &ContourParams { translate: (5.0, -3.0), ..Default::default() });
+    assert!((b[0].points[0].0 - a[0].points[0].0 - 5.0).abs() < 1e-4);
+    assert!((b[0].points[0].1 - a[0].points[0].1 + 3.0).abs() < 1e-4);
+    // 线性渐变: 亚像素边缘落在 128 对应的位置 (x=12.8 px), 非亚像素则在格边中点
+    let ramp = gfn(30, 10, |x, _| (x as f32 * 10.0).min(255.0));
+    let c = extract_contours(&ramp, &ContourParams::default());
+    let min_x = c[0].points.iter().map(|p| p.0).fold(f32::MAX, f32::min);
+    assert!((min_x - 12.8).abs() < 0.05, "{min_x}");
+}
+fn gfn(w: usize, h: usize, f: impl Fn(usize, usize) -> f32) -> Gray {
+    Gray { width: w, height: h, data: (0..w * h).map(|i| f(i % w, i / w)).collect() }
+}

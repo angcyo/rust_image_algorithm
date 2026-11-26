@@ -4,6 +4,7 @@ pub mod advanced;
 pub mod binary;
 pub mod blend;
 pub mod color;
+pub mod contour;
 pub mod distort;
 pub mod edge;
 pub mod filter;

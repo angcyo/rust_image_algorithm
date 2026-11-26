@@ -427,6 +427,14 @@ pub fn bounding_rect(c: &[(usize, usize)]) -> (usize, usize, usize, usize) {
 
 /// 在图像上绘制轮廓折线 (Bresenham), `thickness` 以邻域扩展实现。
 pub fn draw_contours(img: &mut Image, contours: &[Contour], color: [u8; 4], thickness: usize) {
+    for c in contours {
+        let pts: Vec<(isize, isize)> = c.iter().map(|p| (p.0 as isize, p.1 as isize)).collect();
+        draw_polyline(img, &pts, color, thickness);
+    }
+}
+
+/// 绘制闭合折线 (坐标可越界, 越界部分被裁剪)。
+pub fn draw_polyline(img: &mut Image, pts: &[(isize, isize)], color: [u8; 4], thickness: usize) {
     let r = thickness.saturating_sub(1) as isize / 2;
     let mut plot = |x: isize, y: isize| {
         for j in -r..=r {
@@ -438,59 +446,64 @@ pub fn draw_contours(img: &mut Image, contours: &[Contour], color: [u8; 4], thic
             }
         }
     };
-    for c in contours {
-        for i in 0..c.len() {
-            let (a, b) = (c[i], c[(i + 1) % c.len()]);
-            let (mut x0, mut y0, x1, y1) = (a.0 as isize, a.1 as isize, b.0 as isize, b.1 as isize);
-            let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
-            let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
-            let mut err = dx + dy;
-            loop {
-                plot(x0, y0);
-                if x0 == x1 && y0 == y1 {
-                    break;
-                }
-                let e2 = 2 * err;
-                if e2 >= dy { err += dy; x0 += sx; }
-                if e2 <= dx { err += dx; y0 += sy; }
+    for i in 0..pts.len() {
+        let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+        let (mut x0, mut y0, x1, y1) = (a.0, a.1, b.0, b.1);
+        let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
+        let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
+        let mut err = dx + dy;
+        loop {
+            plot(x0, y0);
+            if x0 == x1 && y0 == y1 {
+                break;
             }
+            let e2 = 2 * err;
+            if e2 >= dy { err += dy; x0 += sx; }
+            if e2 <= dx { err += dx; y0 += sy; }
         }
     }
 }
-
-/// 骨架化 (Zhang–Suen 细化)。输入二值图, 输出 1 像素宽骨架。
+/// 骨架化 (Zhang-Suen 细化), 输入二值图 (255 前景), 输出 1 像素宽骨架。
 pub fn skeletonize(bin: &Gray) -> Gray {
     let (w, h) = (bin.width, bin.height);
-    let mut g: Vec<u8> = bin.data.iter().map(|&v| (v >= 128.0) as u8).collect();
-    let at = |g: &Vec<u8>, x: isize, y: isize| if x < 0 || y < 0 || x >= w as isize || y >= h as isize { 0 } else { g[y as usize * w + x as usize] };
+    let mut a: Vec<u8> = bin.data.iter().map(|&v| (v > 127.0) as u8).collect();
+    let at = |a: &[u8], x: isize, y: isize| -> u8 {
+        if x < 0 || y < 0 || x >= w as isize || y >= h as isize { 0 } else { a[y as usize * w + x as usize] }
+    };
     loop {
         let mut changed = false;
         for step in 0..2 {
             let mut del = Vec::new();
             for y in 0..h as isize {
                 for x in 0..w as isize {
-                    if at(&g, x, y) == 0 {
+                    if a[y as usize * w + x as usize] == 0 {
                         continue;
                     }
-                    let p = [at(&g, x, y - 1), at(&g, x + 1, y - 1), at(&g, x + 1, y), at(&g, x + 1, y + 1), at(&g, x, y + 1), at(&g, x - 1, y + 1), at(&g, x - 1, y), at(&g, x - 1, y - 1)];
+                    // P2..P9 顺时针, 从正上方开始
+                    let p = [at(&a, x, y - 1), at(&a, x + 1, y - 1), at(&a, x + 1, y), at(&a, x + 1, y + 1),
+                             at(&a, x, y + 1), at(&a, x - 1, y + 1), at(&a, x - 1, y), at(&a, x - 1, y - 1)];
                     let b: u8 = p.iter().sum();
-                    let a = (0..8).filter(|&i| p[i] == 0 && p[(i + 1) % 8] == 1).count();
-                    let ok = if step == 0 { p[0] * p[2] * p[4] == 0 && p[2] * p[4] * p[6] == 0 } else { p[0] * p[2] * p[6] == 0 && p[0] * p[4] * p[6] == 0 };
-                    if (2..=6).contains(&b) && a == 1 && ok {
-                        del.push((x as usize, y as usize));
+                    let t = (0..8).filter(|&i| p[i] == 0 && p[(i + 1) % 8] == 1).count();
+                    let (c1, c2) = if step == 0 {
+                        (p[0] * p[2] * p[4], p[2] * p[4] * p[6])
+                    } else {
+                        (p[0] * p[2] * p[6], p[0] * p[4] * p[6])
+                    };
+                    if (2..=6).contains(&b) && t == 1 && c1 == 0 && c2 == 0 {
+                        del.push(y as usize * w + x as usize);
                     }
                 }
             }
             if !del.is_empty() {
                 changed = true;
-            }
-            for (x, y) in del {
-                g[y * w + x] = 0;
+                for i in del {
+                    a[i] = 0;
+                }
             }
         }
         if !changed {
             break;
         }
     }
-    Gray { width: w, height: h, data: g.into_iter().map(|v| v as f32 * 255.0).collect() }
+    Gray { width: w, height: h, data: a.into_iter().map(|v| v as f32 * 255.0).collect() }
 }
