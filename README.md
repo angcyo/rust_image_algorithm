@@ -84,3 +84,29 @@ cargo run --release --example demo in.ppm d  # 处理自己的 PPM(P6/P5) 图片
 ## 许可
 
 MIT
+
+
+---
+
+## 扩展模块 (第二阶段)
+
+依赖: 仅 `image` (jpeg/png/bmp) 用于 `Image::load` / `Image::save`, 算法本身全部自研。
+
+| 模块 | 内容 |
+|------|------|
+| `blend` | 14 种 PS 混合模式 (正片叠底/滤色/叠加/柔光/强光/差值/排除…) + 蒙版 + 羽化 |
+| `space` | HSV / Lab / YCbCr 转换, Lab 对比度/饱和度, 通道视图 |
+| `advanced` | Kuwahara 绘画、非局部均值降噪、镜头模糊(光圈)、Bloom 辉光、去雾(暗通道)、卡通化、Harris 角点、Hough 圆检测 |
+
+## 示例输出与测试方法
+
+测试图: `tests/test_image.jpg` (100x100, 示例中双三次放大到 300px)。
+
+```
+cargo test --release                              # 单元测试 + 全部示例回归测试
+cargo run --release --example gallery             # 生成 docs/images/*.png 与 docs/GALLERY.md
+cargo run --release --example gallery <图片> <尺寸>  # 自定义输入
+```
+
+`src/gallery.rs` 是所有示例的唯一注册表 (109 个, 含调用代码); `tests/gallery.rs` 校验每个算法能运行、尺寸有效、结果相对输入有变化。
+每种算法的输出图片与调用代码见 [docs/GALLERY.md](docs/GALLERY.md)。

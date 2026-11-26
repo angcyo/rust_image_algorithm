@@ -138,6 +138,17 @@ impl Image {
         }
     }
 
+    /// 读取 JPEG/PNG/BMP 等常见格式 (基于 `image` crate), 格式由扩展名/内容自动识别。
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Image, ::image::ImageError> {
+        let rgba = ::image::open(path)?.to_rgba8();
+        Ok(Image { width: rgba.width() as usize, height: rgba.height() as usize, data: rgba.into_raw() })
+    }
+
+    /// 保存为 PNG/JPEG/BMP (由扩展名决定格式)。
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), ::image::ImageError> {
+        ::image::save_buffer(path, &self.data, self.width as u32, self.height as u32, ::image::ColorType::Rgba8)
+    }
+
     /// 读取 PPM(P6)/PGM(P5) 二进制文件。
     pub fn load_pnm<P: AsRef<Path>>(path: P) -> io::Result<Image> {
         let bytes = fs::read(path)?;
